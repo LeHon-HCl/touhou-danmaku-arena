@@ -1,0 +1,30 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+
+# 美术/音频源文件（导出成品入库，源文件不入库）
+*.aseprite
+*.psd
+*.kra
+*.wav
+
+# 环境与本地配置
+.env
+.env.*
+!.env.example
+
+# 日志（服务端对局日志同样不入库）
+logs/
+*.log
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# 本地工具与会话数据
+.workbuddy/

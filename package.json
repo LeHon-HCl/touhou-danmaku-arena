@@ -1,0 +1,37 @@
+{
+  "name": "touhou-danmaku-arena",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "东方同人弹幕竞技（非商业同人项目，仅同好群内部分发）",
+  "scripts": {
+    "dev": "vite --config client/vite.config.ts",
+    "build": "vite build --config client/vite.config.ts",
+    "preview": "vite preview --config client/vite.config.ts",
+    "build:config": "tsx scripts/build-config.ts",
+    "server": "npm run build:config && tsx server/src/index.ts",
+    "typecheck": "npm run typecheck:shared && npm run typecheck:client && npm run typecheck:server",
+    "typecheck:shared": "tsc -p shared/tsconfig.json --noEmit",
+    "typecheck:client": "tsc -p client/tsconfig.json --noEmit",
+    "typecheck:server": "tsc -p server/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "npm run lint:boundary && npm run format:check",
+    "lint:boundary": "node scripts/check-shared-boundaries.mjs",
+    "format": "prettier --write \"{shared,client,scripts,docs}/**/*.{ts,js,json,html,md}\" \"*.{json,md}\"",
+    "format:check": "prettier --check \"{shared,client,scripts,docs}/**/*.{ts,js,json,html,md}\" \"*.{json,md}\""
+  },
+  "dependencies": {
+    "phaser": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "prettier": "^3.10.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0",
+    "ws": "^8.23.0"
+  }
+}

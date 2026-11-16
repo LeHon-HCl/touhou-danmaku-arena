@@ -1,0 +1,61 @@
+{
+  "version": "a4519b29",
+  "config": {
+    "stepMs": 33.333333333333336,
+    "characters": {
+      "reimu": {
+        "id": "reimu",
+        "displayName": "博丽灵梦",
+        "maxHp": 100,
+        "maxShield": 40,
+        "shieldRegenDelay": 5000,
+        "shieldRegenPerSecond": 1.5,
+        "moveSpeed": 170,
+        "fireInterval": 560,
+        "damage": 8,
+        "bulletSpeed": 620,
+        "bulletRadius": 5,
+        "bulletLife": 1200,
+        "bodyRadius": 12,
+        "respawnDelay": 5000
+      },
+      "marisa": {
+        "id": "marisa",
+        "displayName": "雾雨魔理沙",
+        "maxHp": 90,
+        "maxShield": 35,
+        "shieldRegenDelay": 5000,
+        "shieldRegenPerSecond": 1.4,
+        "moveSpeed": 180,
+        "fireInterval": 450,
+        "damage": 6.5,
+        "bulletSpeed": 660,
+        "bulletRadius": 4.5,
+        "bulletLife": 1100,
+        "bodyRadius": 12,
+        "respawnDelay": 5000
+      }
+    },
+    "dummy": {
+      "maxHp": 100,
+      "maxShield": 30,
+      "shieldRegenDelay": 999999,
+      "shieldRegenPerSecond": 0,
+      "moveSpeed": 0,
+      "fireInterval": 0,
+      "damage": 0,
+      "bulletSpeed": 0,
+      "bulletRadius": 0,
+      "bulletLife": 0,
+      "bodyRadius": 14,
+      "respawnDelay": 2000
+    },
+    "items": {
+      "fixedSpawnInterval": 5000,
+      "randomSpawnInterval": 9000,
+      "maxOnGround": 6,
+      "groundLife": 20000,
+      "pickupRadius": 20
+    }
+  }
+}

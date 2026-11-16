@@ -31,7 +31,7 @@
 
 ## 当前进度
 
-**阶段：设计文档初步完成，正在人工完整核验与完善，代码尚未开始。** 仓库目前只有 `docs/` 下的四份设计文档，clone 下来暂时只能读文档，跑不起来。
+**阶段：MVP 骨架已落地，本地可跑通「大厅 → 选人 → 对战 → 结算」，并支持两台浏览器同房互射。** 代码结构与逐文件职责见 [`docs/code-map.md`](./docs/code-map.md)。
 
 > 说明：四份文档已能完整描述玩法、选型与协作方式，但**尚未逐条复核**（章节间口径是否一致、数值与公式是否需要换算、交叉引用是否失效等），仍在人工通读校对与补充阶段。文档中带 ✅ 的条目是已确认的结论，不代表全文已校验完毕；以 💡 / ⬜ 标注的条目仍在讨论中。
 
@@ -41,8 +41,8 @@
 | 技术方案 | 🟡 v0.4，初步完成（部署与成本待定） |
 | 开发约定 | 🟡 初步完成，核验中 |
 | 美术规范 | 🟡 初步完成（音频事件清单待补） |
-| 代码 | ⬜ 未开始 |
-| 下一个里程碑 | 两台浏览器同房互射的最小联机 demo |
+| 代码 | 🟢 MVP 骨架可运行（shared / client / server 三端打通） |
+| 下一个里程碑 | 补齐符卡与剩余 3 种道具，完善练习场手感 |
 
 **MVP 范围**：灵梦 + 魔理沙 2 个角色、1 张地图、PvP 混战、8 种道具、符卡系统、护盾系统、公网联机、单人离线练习场、音效。
 **1.1 交付**：PvP 团队战（含观战）。
@@ -60,6 +60,7 @@
 | [docs/tech-design.md](docs/tech-design.md) | 技术方案：选型、架构、同步模型、目录结构、风险 | 程序 | 2️⃣ |
 | [docs/dev-conventions.md](docs/dev-conventions.md) | 开发约定：代码风格、Git 流程、配置表、资源命名 | 全体开发 | 3️⃣ |
 | [docs/art-spec.md](docs/art-spec.md) | 美术与音频规范：像素规格、色板、动画、命名 | 美术 / 音频 | 4️⃣ |
+| [docs/code-map.md](docs/code-map.md) | 实现说明：目录与逐文件职责、一帧的数据流、改 X 该动哪里、常见问题 | 程序 | 🆕 |
 
 **新成员上手建议**：需求第 1–2 章（定位与核心玩法）→ 技术方案第 2 章（14 条 ADR，能省掉大量"为什么不用 X"的争论）→ 开发约定第 3 章（分支流程）。
 
@@ -96,7 +97,7 @@
 
 ---
 
-## 目录结构（规划）
+## 目录结构
 
 ```
 touhou-danmaku-arena/
@@ -121,22 +122,28 @@ touhou-danmaku-arena/
 
 三种运行模式共用**同一条** `shared/step.ts`：服务端以 30Hz 权威推进；离线练习场以 30Hz 本地推进；联机客户端的职责只有"预测自己的移动 + 把世界画出来"，它**不推进世界**。
 
+> 实际落地后的逐文件说明见 [docs/code-map.md](docs/code-map.md)。当前还没有 `assets/` 素材目录（先用程序生成的占位贴图与合成音效）。
+
 ---
 
 ## 快速开始
 
-> 🚧 **目前还没有代码**，以下为规划中的命令，尚未实现。等 MVP 骨架落地后本节会更新。
-
 ```bash
-git clone https://github.com/LeHon-HCl/touhou-danmaku-arena.git
+git clone https://github.com/Wilson82262025/touhou-danmaku-arena.git
 cd touhou-danmaku-arena
 
-# 规划中（尚未实现）
-# npm install
-# npm run dev            # 客户端，Vite 开发服务器（内部会串上 build:config）
-# npm run build:config   # shared/config → config/game-config.json
-# npm run server         # tsx server/src/index.ts
+npm install
+npm run dev            # 客户端，Vite 开发服务器（http://localhost:5173）
+npm run build:config   # shared/config → config/game-config.json
+npm run server         # 联机服务端，ws://localhost:8080（房间号暂时固定 test）
 ```
+
+Windows 也可以直接双击 `启动游戏.bat` / `启动联机服务端.bat`。
+
+- **操作**：WASD 移动、鼠标瞄准、左键射击、ESC 或 P 暂停、R 重开
+- **练习**：大厅选「练习场（自由）」或「练习挑战（60 秒）」
+- **联机**：先 `npm run server`，再开两个浏览器标签页，大厅选「联机对战」
+- **其它命令**：`npm test`（纯逻辑单测）、`npm run typecheck`（三端类型检查）、`npm run lint`（shared 依赖边界 + 格式检查）
 
 运行所需环境：Node.js（LTS）、npm，浏览器 Chrome / Edge。
 

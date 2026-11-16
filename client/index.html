@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>东方同人弹幕竞技 · 练习场</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #05050a;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #game canvas {
+        display: block;
+        /* 逻辑分辨率 640×360 由整数倍放大，保持像素块为正方形（art-spec 2.2） */
+        image-rendering: pixelated;
+      }
+      #hint {
+        position: fixed;
+        left: 10px;
+        bottom: 8px;
+        color: #4a4a58;
+        font:
+          12px/1.5 system-ui,
+          'Microsoft YaHei',
+          sans-serif;
+        user-select: none;
+      }
+
+      /*
+        昵称输入框：盖在画布上方的一层原生 DOM。
+        只在大厅场景显示（由 MenuScene 控制 hidden），
+        用原生 input 是因为 canvas 里自己实现文本输入要处理光标与输入法，成本太高。
+      */
+      #nickname-wrap {
+        position: fixed;
+        top: 14%;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: rgba(20, 20, 28, 0.92);
+        border: 1px solid #33334a;
+        border-radius: 6px;
+        color: #9aa6bd;
+        font:
+          13px/1.4 system-ui,
+          'Microsoft YaHei',
+          sans-serif;
+        z-index: 10;
+      }
+      #nickname-wrap input {
+        width: 140px;
+        padding: 4px 6px;
+        background: #0f0f16;
+        border: 1px solid #33334a;
+        border-radius: 4px;
+        color: #f2f2f7;
+        font:
+          13px/1.4 system-ui,
+          'Microsoft YaHei',
+          sans-serif;
+        outline: none;
+      }
+      #nickname-wrap input:focus {
+        border-color: #6b7a99;
+      }
+      /*
+        注意：上面的 display: flex 会覆盖浏览器对 [hidden] 的默认 display: none，
+        所以必须显式补一条，否则昵称框离开大厅后仍会压在战斗画面上。
+      */
+      #nickname-wrap[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="nickname-wrap" hidden>
+      <label for="nickname">昵称</label>
+      <input id="nickname" type="text" maxlength="12" autocomplete="off" spellcheck="false" />
+    </div>
+    <div id="hint">WASD 移动 · 鼠标瞄准 · 左键射击 · ESC 暂停 · R 重开</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

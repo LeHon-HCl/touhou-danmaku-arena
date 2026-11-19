@@ -32,18 +32,26 @@ export class MenuScene extends Phaser.Scene {
 
     // 标题区
     this.add
-      .text(GAME_WIDTH / 2, 62, '东方同人弹幕竞技', {
+      .text(GAME_WIDTH / 2, 124, '东方闯创爆', {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '26px',
+        fontSize: '52px',
         color: '#f2f2f7',
       })
       .setOrigin(0.5)
       .setShadow(0, 2, '#000000', 4);
 
     this.add
-      .text(GAME_WIDTH / 2, 94, '稀疏弹道的走位对枪 · 练习场', {
+      .text(GAME_WIDTH / 2, 188, '敢不敢和我举行一下别样的碰碰车大赛', {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '12px',
+        fontSize: '24px',
+        color: '#7b7b90',
+      })
+      .setOrigin(0.5);
+
+    this.add
+      .text(GAME_WIDTH / 2, 228, '深圳高中生诹访子爱好者团体不匠心巨献', {
+        fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
+        fontSize: '24px',
         color: '#7b7b90',
       })
       .setOrigin(0.5);
@@ -51,30 +59,30 @@ export class MenuScene extends Phaser.Scene {
     this.setupNicknameInput();
 
     // 入口按钮
-    this.createButton('练习场（自由）', 142, () => this.startBattle());
-    this.createButton('练习挑战（60 秒）', 182, () => this.startBattle(CHALLENGE_DURATION_MS));
-    this.createButton('联机对战（本地房间 test）', 222, () => this.startOnlineBattle());
+    this.createButton('练习场（自由）', 284, () => this.startBattle());
+    this.createButton('挑战 AI（60 秒）', 364, () => this.startBattle(CHALLENGE_DURATION_MS, 1));
+    this.createButton('联机对战（本地房间 test）', 444, () => this.startOnlineBattle());
 
     // 未实现的功能：明确写出"什么时候有"，比藏起来好
     this.add
-      .text(GAME_WIDTH / 2, 268, '联机需要先在本机跑服务端：npm run server', {
+      .text(GAME_WIDTH / 2, 536, '联机需要先在本机跑服务端：npm run server', {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '11px',
+        fontSize: '22px',
         color: '#4a4a58',
       })
       .setOrigin(0.5);
 
     this.add
-      .text(GAME_WIDTH / 2, 336, '1 = 练习场 · 2 = 挑战 · 3 = 联机（需服务端）', {
+      .text(GAME_WIDTH / 2, 672, '1 = 练习场 · 2 = 挑战 AI · 3 = 联机（需服务端）', {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '10px',
+        fontSize: '20px',
         color: '#4a4a58',
       })
       .setOrigin(0.5);
 
     // 键盘快捷入口，省得每次点鼠标
     this.input.keyboard!.on('keydown-ONE', () => this.startBattle());
-    this.input.keyboard!.on('keydown-TWO', () => this.startBattle(CHALLENGE_DURATION_MS));
+    this.input.keyboard!.on('keydown-TWO', () => this.startBattle(CHALLENGE_DURATION_MS, 1));
     this.input.keyboard!.on('keydown-THREE', () => this.startOnlineBattle());
   }
 
@@ -117,10 +125,10 @@ export class MenuScene extends Phaser.Scene {
     const text = this.add
       .text(GAME_WIDTH / 2, y, label, {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '16px',
+        fontSize: '32px',
         color: '#cdd6ea',
         backgroundColor: '#1b1b26',
-        padding: { x: 18, y: 8 },
+        padding: { x: 36, y: 16 },
       })
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true });
@@ -130,12 +138,16 @@ export class MenuScene extends Phaser.Scene {
     text.on('pointerdown', onClick);
   }
 
-  /** 进入选人界面；matchDurationMs 不传就是自由练习 */
-  private startBattle(matchDurationMs?: number): void {
+  /**
+   * 进入选人界面。
+   * @param matchDurationMs 本局时长；不传 = 自由练习
+   * @param aiOpponents AI 对手数量；不传 = 0（只有站桩假人）
+   */
+  private startBattle(matchDurationMs?: number, aiOpponents?: number): void {
     if (this.nicknameInput) {
       this.registry.set('nickname', this.nicknameInput.value.trim() || '灵梦');
     }
-    this.scene.start(SceneKeys.CharacterSelect, { matchDurationMs });
+    this.scene.start(SceneKeys.CharacterSelect, { matchDurationMs, aiOpponents });
   }
 
   /** 联机：房间名先写死 test，跑通后再做房间号/大厅（1.1） */

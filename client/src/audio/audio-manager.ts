@@ -162,6 +162,17 @@ export class AudioManager {
       },
     ];
 
+    // 已经通过 assets/audio/ 加载进来的音效不再合成，只补缺的那些。
+    // （BootScene 会先加载真实素材，再调这里兜底。）
+    const pending = definitions.filter(
+      (definition) => !this.scene.cache.audio.exists(definition.key),
+    );
+
+    if (pending.length === 0) {
+      this.isReady = true;
+      return;
+    }
+
     await new Promise<void>((resolve) => {
       // Phaser 的 sound 是三选一的联合类型，只有 WebAudio 后端才有 decodeAudio，
       // 上面 hasWebAudio 已经做过判断，这里做一次类型收窄即可
@@ -180,7 +191,7 @@ export class AudioManager {
       manager.once('decodedall', settle);
 
       try {
-        manager.decodeAudio(definitions);
+        manager.decodeAudio(pending);
       } catch (error) {
         // 任何异常都不要让启动流程挂住：静音也能玩
         console.error('音效解码失败：', error);
@@ -188,8 +199,10 @@ export class AudioManager {
         return;
       }
 
-      // 兜底：万一 'decodedall' 没来（后端切换/解码异常），1.5 秒后也放行
-      this.scene.time.delayedCall(1500, settle);
+      // 兜底：万一 'decodedall' 没来（后端切换/解码异常），1.5 秒后也放行。
+      // 用 setTimeout 而不是 scene.time.delayedCall：后者挂在 BootScene 的时钟上，
+      // 一旦场景被停止就再也不会触发，启动流程会永久卡住。
+      window.setTimeout(settle, 1500);
     });
 
     this.isReady = true;
@@ -207,8 +220,13 @@ export class AudioManager {
       return;
     }
 
-    // 限流：同一音效在极短时间内重复触发时直接丢掉
-    const now = this.scene.time.now;
+    // 限流：同一音效在极短时间内重复触发时直接丢掉。
+    //
+    // 这里必须用 performance.now()，不能用 this.scene.time.now：
+    // AudioManager 由 BootScene 创建，而 BootScene 进入大厅后就被停止，
+    // 它的 Clock 会永久冻结在停止那一刻。用冻结的时钟做差，第二次起永远差值为 0，
+    // 结果就是「只有开局第一声能响」。
+    const now = performance.now();
     const lastPlayedAt = this.lastPlayedAt.get(key) ?? -Infinity;
     if (now - lastPlayedAt < MIN_INTERVAL_MS[key]) {
       return;

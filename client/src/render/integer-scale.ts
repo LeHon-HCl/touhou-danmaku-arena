@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 
-/** 逻辑分辨率（art-spec 2.2 已定案，所有 UI 与素材按这个尺寸设计） */
-export const GAME_WIDTH = 640;
-export const GAME_HEIGHT = 360;
+/** 当前逻辑分辨率：在 640×360 基础上翻倍，适配更多视野与更大的 UI 字号 */
+export const GAME_WIDTH = 1280;
+export const GAME_HEIGHT = 720;
 
 /**
  * 把画布按**整数倍**放大铺满窗口，非整数倍时留黑边。

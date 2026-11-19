@@ -1,14 +1,7 @@
 import type { BattleConfig } from './config/types';
-import {
-  DUMMY_SPAWN_TILES,
-  ITEM_SPAWN_TILES,
-  MAP_COLUMNS,
-  MAP_ROWS,
-  MAP_TILE_SIZE,
-  MAP_WALL_BLOCKS,
-  MULTI_SPAWN_TILES,
-  PLAYER_SPAWN_TILE,
-} from './config/map-shrine';
+import { DEFAULT_CHARACTER_ID } from './content/characters';
+import { getMap } from './content/maps';
+import type { GameMap } from './content/maps';
 import { pickWeightedItemId } from './config/items';
 import { createDefaultModifiers, spawnPickup } from './sim/items';
 import type {
@@ -27,47 +20,41 @@ export const PLAYER_ID = 1;
 export interface CreateBattleOptions {
   /** 本地玩家选的角色，默认灵梦 */
   characterId?: CharacterId;
+  /** 使用哪张地图；不传用默认地图（见 content/maps） */
+  mapId?: string;
   /** 本局时长（毫秒）。不传表示不计时（练习场自由模式） */
   matchDurationMs?: number;
   /** 开局时在地上预置的道具数量，默认 2（方便测试，也让开局有奔头） */
   seedPickups?: number;
   /** 假人数量，默认 3（联机对战传 0） */
   dummyCount?: number;
+  /**
+   * AI 对手数量（单人模式用）。默认 0。
+   * AI 会使用 `aiCharacterId` 指定的角色，从天生的联机出生点出发。
+   */
+  aiCount?: number;
+  /** AI 使用的角色 id，默认与本地玩家不同（让对手一眼能区分） */
+  aiCharacterId?: CharacterId;
 }
 
+/** 本地玩家的对手 id 起点：AI 与假人都从这个号段往后排 */
+const OPPONENT_ID_BASE = 2;
+
 /** 瓦片坐标取中心点（像素），保证角色站在格子正中而不是格线交叉处 */
-export function tileCenterToWorld(column: number, row: number): { x: number; y: number } {
-  return {
-    x: column * MAP_TILE_SIZE + MAP_TILE_SIZE / 2,
-    y: row * MAP_TILE_SIZE + MAP_TILE_SIZE / 2,
-  };
+export function tileCenterToWorld(
+  column: number,
+  row: number,
+  map: GameMap = getMap(undefined),
+): { x: number; y: number } {
+  return map.tileCenter(column, row);
 }
 
 /**
- * 由瓦片配置生成墙体矩形列表（像素）。
- * 四周边界墙自动补齐，避免地图表的每一行都要写满 '#'。
+ * 由地图定义生成墙体矩形列表（像素）。
+ * 四周边界墙由 GameMap 自动补齐，避免地图表的每一行都要写满 '#'。
  */
-export function buildMapWalls(): Rect[] {
-  const mapWidth = MAP_COLUMNS * MAP_TILE_SIZE;
-  const mapHeight = MAP_ROWS * MAP_TILE_SIZE;
-
-  const walls: Rect[] = [
-    { x: 0, y: 0, width: MAP_TILE_SIZE, height: mapHeight },
-    { x: mapWidth - MAP_TILE_SIZE, y: 0, width: MAP_TILE_SIZE, height: mapHeight },
-    { x: 0, y: 0, width: mapWidth, height: MAP_TILE_SIZE },
-    { x: 0, y: mapHeight - MAP_TILE_SIZE, width: mapWidth, height: MAP_TILE_SIZE },
-  ];
-
-  for (const block of MAP_WALL_BLOCKS) {
-    walls.push({
-      x: block.column * MAP_TILE_SIZE,
-      y: block.row * MAP_TILE_SIZE,
-      width: block.widthInTiles * MAP_TILE_SIZE,
-      height: block.heightInTiles * MAP_TILE_SIZE,
-    });
-  }
-
-  return walls;
+export function buildMapWalls(map: GameMap = getMap(undefined)): Rect[] {
+  return map.buildWalls();
 }
 
 /** 创建一个满血满盾的战斗单位 */
@@ -78,11 +65,13 @@ export function createFighter(
   stats: FighterStats,
   x: number,
   y: number,
+  isAi = false,
 ): PlayerState {
   return {
     id,
     characterId,
     isDummy,
+    isAi,
     stats,
     x,
     y,
@@ -115,8 +104,9 @@ export function createBattleState(
   config: BattleConfig,
   options: CreateBattleOptions = {},
 ): BattleState {
-  const characterId = options.characterId ?? 'reimu';
-  const playerSpawn = tileCenterToWorld(PLAYER_SPAWN_TILE.column, PLAYER_SPAWN_TILE.row);
+  const map = getMap(options.mapId);
+  const characterId = options.characterId ?? DEFAULT_CHARACTER_ID;
+  const playerSpawn = map.playerSpawnPoint();
   const players: PlayerState[] = [
     createFighter(
       PLAYER_ID,
@@ -128,19 +118,42 @@ export function createBattleState(
     ),
   ];
 
-  DUMMY_SPAWN_TILES.forEach((tile, index) => {
-    const spawn = tileCenterToWorld(tile.column, tile.row);
+  const dummySpawns = map.dummySpawnPoints();
+  const dummyLimit = Math.min(options.dummyCount ?? dummySpawns.length, dummySpawns.length);
+  for (let index = 0; index < dummyLimit; index += 1) {
+    const spawn = dummySpawns[index];
     players.push(
       createFighter(PLAYER_ID + 1 + index, 'dummy', true, config.dummy, spawn.x, spawn.y),
     );
-  });
+  }
+
+  // AI 对手：用真角色数值、从联机出生点出发；isAi 让它们每帧接收 AI 产出的输入
+  const aiCount = Math.max(0, options.aiCount ?? 0);
+  const aiCharacterId =
+    options.aiCharacterId ??
+    (characterId === 'marisa' ? DEFAULT_CHARACTER_ID : ('marisa' as CharacterId));
+  for (let index = 0; index < aiCount; index += 1) {
+    const spawn = map.multiSpawnPoint(index + 1);
+    players.push(
+      createFighter(
+        OPPONENT_ID_BASE + dummyLimit + index,
+        aiCharacterId,
+        false,
+        config.characters[aiCharacterId],
+        spawn.x,
+        spawn.y,
+        true,
+      ),
+    );
+  }
 
   const state: BattleState = {
     tick: 0,
     timeMs: 0,
-    mapWidth: MAP_COLUMNS * MAP_TILE_SIZE,
-    mapHeight: MAP_ROWS * MAP_TILE_SIZE,
-    walls: buildMapWalls(),
+    mapWidth: map.width,
+    mapHeight: map.height,
+    mapId: map.id,
+    walls: map.buildWalls(),
     players,
     bullets: [],
     pickups: [],
@@ -156,11 +169,10 @@ export function createBattleState(
   // 开局预置几个道具：让玩家一进场就有目标，也方便第一次跑起来就能看到道具
   const seedCount = options.seedPickups ?? 2;
   for (let index = 0; index < seedCount; index += 1) {
-    const tile = ITEM_SPAWN_TILES[index];
-    if (!tile) {
+    const point = map.itemSpawnPoint(index);
+    if (!point) {
       break;
     }
-    const point = tileCenterToWorld(tile.column, tile.row);
     spawnPickup(state, config, point.x, point.y, pickWeightedItemId());
   }
 
@@ -183,8 +195,7 @@ export function addPlayer(
   characterId: CharacterId,
   spawnIndex: number,
 ): PlayerState {
-  const tile = MULTI_SPAWN_TILES[spawnIndex % MULTI_SPAWN_TILES.length];
-  const spawn = tileCenterToWorld(tile.column, tile.row);
+  const spawn = getMap(state.mapId).multiSpawnPoint(spawnIndex);
   const player = createFighter(
     playerId,
     characterId,

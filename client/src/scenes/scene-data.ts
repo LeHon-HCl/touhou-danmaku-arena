@@ -15,6 +15,11 @@ export interface BattleSceneData {
   matchDurationMs?: number;
   /** 房间号；有值表示进联机对局，空/未传则是单机练习 */
   onlineRoom?: string;
+  /**
+   * 单人模式的 AI 对手数量。0 / 不传 = 纯练习场（只有站桩假人）。
+   * AI 会走位、预判、开火，规则与真人完全相同。
+   */
+  aiOpponents?: number;
 }
 
 /** 进入选人界面时的参数 */
@@ -23,6 +28,8 @@ export interface CharacterSelectSceneData {
   matchDurationMs?: number;
   /** 选完之后要进哪个房间；不传 = 单机 */
   onlineRoom?: string;
+  /** 选完之后带上几个 AI 对手；不传 = 0 */
+  aiOpponents?: number;
 }
 
 /** 进入结算界面时的参数 */

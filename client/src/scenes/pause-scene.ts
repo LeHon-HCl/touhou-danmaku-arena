@@ -14,6 +14,8 @@ export class PauseScene extends Phaser.Scene {
   static readonly KEY = SceneKeys.Pause;
 
   private battleData!: BattleSceneData;
+  /** 热键监听器（window 捕获阶段），场景 shutdown 时解绑 */
+  private hotkeyHandler: ((event: KeyboardEvent) => void) | null = null;
 
   constructor() {
     super(PauseScene.KEY);
@@ -28,32 +30,77 @@ export class PauseScene extends Phaser.Scene {
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.66).setOrigin(0).setInteractive();
 
     this.add
-      .text(GAME_WIDTH / 2, 96, '已暂停', {
+      .text(GAME_WIDTH / 2, 192, '已暂停', {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '22px',
+        fontSize: '44px',
         color: '#f2f2f7',
       })
       .setOrigin(0.5);
 
-    this.createButton('继续（ESC / P）', 164, () => this.resumeBattle());
-    this.createButton('重新开始（R）', 206, () => this.restartBattle());
-    this.createButton('返回大厅（Q）', 248, () => this.backToMenu());
+    this.createButton('继续（ESC / P）', 328, () => this.resumeBattle());
+    this.createButton('重新开始（R）', 412, () => this.restartBattle());
+    this.createButton('返回大厅（Q）', 496, () => this.backToMenu());
 
-    const keyboard = this.input.keyboard!;
-    keyboard.on('keydown-ESC', () => this.resumeBattle());
-    keyboard.on('keydown-P', () => this.resumeBattle());
-    keyboard.on('keydown-R', () => this.restartBattle());
-    keyboard.on('keydown-Q', () => this.backToMenu());
+    this.bindHotkeys();
+  }
+
+  /**
+   * 绑定暂停界面的热键。
+   *
+   * 和战斗场景一样用 window 捕获阶段监听，**不用 Phaser 的 KeyboardPlugin**：
+   * 后者遇到 `event.defaultPrevented` 会直接丢弃事件，而 ESC 在不少宿主环境里
+   * 正是被 preventDefault 过的，结果就是"按 ESC 打不开 / 关不掉暂停"。
+   */
+  private bindHotkeys(): void {
+    this.hotkeyHandler = (event: KeyboardEvent): void => {
+      if (!this.scene.isActive()) {
+        return;
+      }
+
+      switch (event.key) {
+        case 'Escape':
+          event.preventDefault();
+          event.stopPropagation();
+          this.resumeBattle();
+          break;
+        case 'p':
+        case 'P':
+          event.preventDefault();
+          this.resumeBattle();
+          break;
+        case 'r':
+        case 'R':
+          event.preventDefault();
+          this.restartBattle();
+          break;
+        case 'q':
+        case 'Q':
+          event.preventDefault();
+          this.backToMenu();
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', this.hotkeyHandler, true);
+
+    this.events.once('shutdown', () => {
+      if (this.hotkeyHandler) {
+        window.removeEventListener('keydown', this.hotkeyHandler, true);
+        this.hotkeyHandler = null;
+      }
+    });
   }
 
   private createButton(label: string, y: number, onClick: () => void): void {
     const text = this.add
       .text(GAME_WIDTH / 2, y, label, {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '15px',
+        fontSize: '30px',
         color: '#cdd6ea',
         backgroundColor: '#1b1b26',
-        padding: { x: 16, y: 7 },
+        padding: { x: 32, y: 14 },
       })
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true });

@@ -28,9 +28,9 @@ export class ResultScene extends Phaser.Scene {
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x0b0b12).setOrigin(0);
 
     this.add
-      .text(GAME_WIDTH / 2, 60, isTimeUp ? '时间到' : '对局结束', {
+      .text(GAME_WIDTH / 2, 120, isTimeUp ? '时间到' : '对局结束', {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '24px',
+        fontSize: '48px',
         color: '#ffe9a8',
       })
       .setOrigin(0.5);
@@ -38,11 +38,11 @@ export class ResultScene extends Phaser.Scene {
     this.add
       .text(
         GAME_WIDTH / 2,
-        92,
+        184,
         matchDurationMs ? `练习挑战 · ${matchDurationMs / 1000} 秒` : '自由练习',
         {
           fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-          fontSize: '12px',
+          fontSize: '24px',
           color: '#7b7b90',
         },
       )
@@ -55,29 +55,29 @@ export class ResultScene extends Phaser.Scene {
       ['造成伤害', Math.round(score.damageDealt)],
       ['拾取道具', score.itemsPicked],
     ];
-    const startY = 136;
+    const startY = 272;
     rows.forEach(([label, value], index) => {
-      const y = startY + index * 26;
+      const y = startY + index * 52;
       this.add
-        .text(GAME_WIDTH / 2 - 90, y, label, {
+        .text(GAME_WIDTH / 2 - 180, y, label, {
           fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-          fontSize: '14px',
+          fontSize: '28px',
           color: '#9aa6bd',
         })
         .setOrigin(0, 0.5);
       this.add
-        .text(GAME_WIDTH / 2 + 90, y, String(value), {
+        .text(GAME_WIDTH / 2 + 180, y, String(value), {
           fontFamily: 'Consolas, "Courier New", monospace',
-          fontSize: '16px',
+          fontSize: '32px',
           color: '#f2f2f7',
         })
         .setOrigin(1, 0.5);
     });
 
-    this.createButton('再来一局（R）', 268, () => {
+    this.createButton('再来一局（R）', 536, () => {
       this.scene.start(SceneKeys.Battle, { characterId, matchDurationMs });
     });
-    this.createButton('返回大厅（Q）', 308, () => this.scene.start(SceneKeys.Menu));
+    this.createButton('返回大厅（Q）', 616, () => this.scene.start(SceneKeys.Menu));
 
     const keyboard = this.input.keyboard!;
     keyboard.on('keydown-R', () =>
@@ -90,10 +90,10 @@ export class ResultScene extends Phaser.Scene {
     const text = this.add
       .text(GAME_WIDTH / 2, y, label, {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '15px',
+        fontSize: '30px',
         color: '#cdd6ea',
         backgroundColor: '#1b1b26',
-        padding: { x: 16, y: 7 },
+        padding: { x: 32, y: 14 },
       })
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true });

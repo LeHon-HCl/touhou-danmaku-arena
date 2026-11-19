@@ -1,13 +1,16 @@
 import Phaser from 'phaser';
 import {
   PLAYER_ID,
+  AiController,
   applySnapshotToState,
   battleConfig,
   createBattleState,
+  getCharacter,
+  getMap,
   hasLineOfSight,
   step,
 } from '@shared';
-import type { BattleState, PlayerInput, PlayerState } from '@shared';
+import type { BattleState, PlayerInput, PlayerState, Rect } from '@shared';
 import { ITEMS } from '@shared/config/items';
 import { AUDIO_REGISTRY_KEY, SFX, type AudioManager } from '../audio/audio-manager';
 import { KeyboardMouseInput } from '../input/keyboard-mouse-input';
@@ -18,8 +21,18 @@ import { TEX, itemTextureKey } from '../render/placeholder-textures';
 import type { BattleSceneData, ResultSceneData } from './scene-data';
 import { SceneKeys } from './scene-keys';
 
-/** 记忆标记保留时长（毫秒）：敌人躲进掩体后，小地图上的旧位置还能看到这么久 */
-const MEMORY_MARKER_LIFETIME = 4000;
+/** 视野核心半角：这个范围内按遮挡结果给正常亮度，敌人也在这里才算"看得见" */
+const VISION_CORE_HALF = (55 * Math.PI) / 180;
+/** 视野外沿半角：核心 → 外沿之间亮度渐暗，避免扇区出现一条硬边 */
+const VISION_OUTER_HALF = (80 * Math.PI) / 180;
+/** 每弧度采样多少条射线：越大亮区边界越平滑（数值与性能的折中） */
+const VISION_RAYS_PER_RADIAN = 120;
+/** 墙角射线两侧的微小角度偏移：让亮区边界精确卡在墙角上（约 0.02°） */
+const CORNER_EPSILON = 0.0004;
+/** 遮罩超出屏幕四角的余量（像素） */
+const SHADOW_MARGIN = 48;
+/** 地图灰暗遮罩透明度 */
+const FOG_ALPHA = 0.35;
 
 /** 联机服务端地址（本地开发）。上线后改成部署域名 + wss:// */
 const ONLINE_SERVER_URL = 'ws://localhost:8080';
@@ -65,6 +78,8 @@ export class BattleScene extends Phaser.Scene {
   private impactEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   /** 受伤时的全屏红闪遮罩 */
   private dangerOverlay!: Phaser.GameObjects.Rectangle;
+  /** 视野外压暗遮罩：放在世界物件上方、HUD 下方 */
+  private visionOverlay!: Phaser.GameObjects.Graphics;
   private hudGraphics!: Phaser.GameObjects.Graphics;
   private hudText!: Phaser.GameObjects.Text;
   /** 挑战模式的倒计时文字（自由练习时不显示） */
@@ -77,8 +92,8 @@ export class BattleScene extends Phaser.Scene {
   private isResultShown = false;
   /** 小地图 */
   private minimap!: Minimap;
-  /** 敌人"最后已知位置"：被墙挡住后，小地图上留一个淡标记（需求 2.4） */
-  private readonly lastKnownPositions = new Map<number, { x: number; y: number; atMs: number }>();
+  /** 会遮挡视线的墙体（排除地图边界墙），按需缓存 */
+  private occluders: Rect[] | null = null;
 
   /** 本地玩家在本局的 id：练习场固定是 PLAYER_ID，联机由服务端分配 */
   private localPlayerId = PLAYER_ID;
@@ -90,17 +105,26 @@ export class BattleScene extends Phaser.Scene {
   private predictedSelf = { x: 0, y: 0, ready: false };
   /** 当前"玩家 id + 角色"列表的签名，变了就重建贴图（联机有人入房/离开） */
   private actorSignature = '';
+  /** 复用的瞄准点对象，避免每帧新建 Vector2 */
+  private readonly aimPoint = new Phaser.Math.Vector2();
+  /** AI 控制器：单人模式下驱动 isAi 单位（只产出输入，不碰判定） */
+  private ai = new AiController();
+  /** 真人玩家 id 集合：AI 只把这些人当目标 */
+  private readonly humanIds = new Set<number>([PLAYER_ID]);
+  /** 热键监听器（window 捕获阶段），场景 shutdown 时解绑 */
+  private hotkeyHandler: ((event: KeyboardEvent) => void) | null = null;
 
   constructor() {
     super(BattleScene.KEY);
   }
 
-  /** 接收从选人界面传来的参数（角色、是否限时、是否联机） */
+  /** 接收从选人界面传来的参数（角色、是否限时、是否联机、AI 数量） */
   init(data: BattleSceneData): void {
     this.battleData = {
       characterId: data.characterId ?? 'reimu',
       matchDurationMs: data.matchDurationMs,
       onlineRoom: data.onlineRoom,
+      aiOpponents: data.aiOpponents ?? 0,
     };
   }
 
@@ -121,6 +145,9 @@ export class BattleScene extends Phaser.Scene {
       this.state = createBattleState(battleConfig, {
         characterId: this.battleData.characterId,
         matchDurationMs: this.battleData.matchDurationMs,
+        // 单人模式：生成一个会走位、会开火的 AI 对手（练习场假人仍保留，可当靶子）
+        aiCount: this.battleData.aiOpponents ?? 0,
+        dummyCount: this.battleData.aiOpponents ? 1 : undefined,
       });
       this.localPlayerId = PLAYER_ID;
     }
@@ -129,6 +156,12 @@ export class BattleScene extends Phaser.Scene {
     this.predictedSelf = { x: 0, y: 0, ready: false };
     this.actorSignature = '';
     this.isResultShown = false;
+    // 重开时世界会被重建，缓存必须一起清掉，否则会拿上一局的地图判定遮挡
+    this.occluders = null;
+    // AI 记忆里存着上一局的位置基准，重开必须重置
+    this.ai.reset();
+    this.humanIds.clear();
+    this.humanIds.add(PLAYER_ID);
 
     // 2. 清空"从 state 派生出来的显示对象"索引表，避免重开时残留旧引用
     this.playerSprite = undefined;
@@ -137,7 +170,6 @@ export class BattleScene extends Phaser.Scene {
     this.bulletSprites.clear();
     this.pickupSprites.clear();
     this.frameInputs.clear();
-    this.lastKnownPositions.clear();
 
     // 3. 搭画面：地图 → 角色 → 相机 → HUD → 特效
     //    注意：createActors 换成了每帧调用的 ensureActors()，因为联机时玩家是陆续入房的
@@ -149,13 +181,13 @@ export class BattleScene extends Phaser.Scene {
     // 4. 输入与音效
     this.inputSource = new KeyboardMouseInput(this);
     //
-    // 暂停/重开用「事件监听」而不是每帧轮询 Key 对象：
-    // Phaser 的 Key 对象依赖 KeyboardPlugin 每帧更新，实测在某些宿主环境（VS Code 内置浏览器）
-    // 里 isDown 一直是 false，轮询永远拿不到按下状态；而 keydown 事件是稳定送达的。
-    // ESC 也可能被宿主拦走，所以额外支持 P，并额外提供右下角的可点击暂停按钮。
-    this.input.keyboard!.on('keydown-ESC', this.openPause, this);
-    this.input.keyboard!.on('keydown-P', this.openPause, this);
-    this.input.keyboard!.on('keydown-R', this.restartRound, this);
+    // 暂停/重开的按键监听**不走 Phaser 的 KeyboardPlugin**：
+    // 1. Phaser 的 Key.isDown 依赖每帧更新，在某些宿主环境（VS Code 内置浏览器）里一直是 false；
+    // 2. 更要紧的是：Escape 常被宿主或浏览器先 preventDefault，而 Phaser 的 KeyboardManager
+    //    遇到 `event.defaultPrevented` 会直接丢弃事件（源码见 KeyboardManager.onKeyDown），
+    //    于是"ESC 暂停"时好时坏、甚至完全没反应。
+    // 所以在 window 的**捕获阶段**直接监听原生事件，早于任何冒泡阶段的 preventDefault 处理。
+    this.bindHotkeys();
     this.input.setDefaultCursor('crosshair');
     // BootScene 已经把 AudioManager 放进 registry，这里取的是同一个实例（音效只解码一次）
     this.audio = this.registry.get(AUDIO_REGISTRY_KEY) as AudioManager;
@@ -200,7 +232,7 @@ export class BattleScene extends Phaser.Scene {
     this.add
       .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, `联机失败\n${message}\n\n2.5 秒后返回大厅`, {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '12px',
+        fontSize: '24px',
         color: '#ff8a8a',
         align: 'center',
       })
@@ -243,13 +275,15 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    this.frameInputs.clear();
-    this.frameInputs.set(player.id, this.inputSource.sample({ x: player.x, y: player.y }));
-
     // 固定步长推进：渲染帧率与逻辑帧率解耦；单帧最多补 5 步，避免切回标签页时一次性快进
     this.accumulatorMs += Math.min(deltaMs, 200);
     let steps = 0;
     while (!this.state.isFinished && this.accumulatorMs >= battleConfig.stepMs && steps < 5) {
+      // 每个逻辑帧重新采样输入：AI 必须和真人用同一份输入结构，才能共用同一个 step()
+      this.frameInputs.clear();
+      this.frameInputs.set(player.id, this.inputSource.sample({ x: player.x, y: player.y }));
+      this.ai.fillInputs(this.state, this.humanIds, this.frameInputs);
+
       step(this.state, this.frameInputs, battleConfig);
       this.accumulatorMs -= battleConfig.stepMs;
       steps += 1;
@@ -346,14 +380,17 @@ export class BattleScene extends Phaser.Scene {
 
   /** 铺地面与墙体（视觉与碰撞是同一份地图数据） */
   private createMap(): void {
+    // 地图从 state.mapId 还原：同一份地图定义在服务端与客户端各自生成墙体（协议里不发墙体）
+    const map = getMap(this.state.mapId);
+
     this.add
-      .tileSprite(0, 0, this.state.mapWidth, this.state.mapHeight, TEX.floor)
+      .tileSprite(0, 0, this.state.mapWidth, this.state.mapHeight, map.floorTextureKey)
       .setOrigin(0)
       .setDepth(-20);
 
     for (const wall of this.state.walls) {
       this.add
-        .tileSprite(wall.x, wall.y, wall.width, wall.height, TEX.wall)
+        .tileSprite(wall.x, wall.y, wall.width, wall.height, map.wallTextureKey)
         .setOrigin(0)
         .setDepth(-10);
     }
@@ -388,14 +425,11 @@ export class BattleScene extends Phaser.Scene {
 
     for (const fighter of this.state.players) {
       const texture =
-        fighter.characterId === 'reimu'
-          ? TEX.reimu
-          : fighter.characterId === 'marisa'
-            ? TEX.marisa
-            : TEX.dummy;
+        fighter.characterId === 'dummy' ? TEX.dummy : getCharacter(fighter.characterId).textureKey;
       const sprite = this.add.image(fighter.x, fighter.y, texture).setDepth(10);
       if (fighter.id === this.localPlayerId) {
         this.playerSprite = sprite;
+        sprite.setDepth(850);
         this.setupCamera();
       } else {
         this.otherSprites.set(fighter.id, sprite);
@@ -420,9 +454,9 @@ export class BattleScene extends Phaser.Scene {
   private createHud(): void {
     this.hudGraphics = this.add.graphics().setScrollFactor(0).setDepth(1000);
     this.hudText = this.add
-      .text(8, 26, '', {
+      .text(16, 52, '', {
         fontFamily: 'Consolas, "Courier New", monospace',
-        fontSize: '11px',
+        fontSize: '22px',
         color: '#cdd6ea',
       })
       .setScrollFactor(0)
@@ -430,9 +464,9 @@ export class BattleScene extends Phaser.Scene {
 
     // 挑战模式的倒计时，放在屏幕正上方居中
     this.timerText = this.add
-      .text(GAME_WIDTH / 2, 8, '', {
+      .text(GAME_WIDTH / 2, 16, '', {
         fontFamily: 'Consolas, "Courier New", monospace',
-        fontSize: '14px',
+        fontSize: '28px',
         color: '#ffe9a8',
       })
       .setOrigin(0.5, 0)
@@ -440,9 +474,9 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(1001);
 
     this.add
-      .text(8, 340, 'WASD 移动 · 鼠标瞄准 · 左键射击 · ESC/P 暂停 · R 重开', {
+      .text(16, 680, 'WASD 移动 · 鼠标瞄准 · 左键射击 · ESC/P 暂停 · R 重开', {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '10px',
+        fontSize: '20px',
         color: '#5a5a6a',
       })
       .setScrollFactor(0)
@@ -450,12 +484,12 @@ export class BattleScene extends Phaser.Scene {
 
     // 可点击的暂停按钮：键位在某些宿主环境里可能被拦截，鼠标点总能用
     this.add
-      .text(GAME_WIDTH - 8, 6, 'Ⅱ 暂停', {
+      .text(GAME_WIDTH - 16, 12, 'Ⅱ 暂停', {
         fontFamily: 'system-ui, "Microsoft YaHei", sans-serif',
-        fontSize: '11px',
+        fontSize: '22px',
         color: '#8b93a8',
         backgroundColor: '#14141c',
-        padding: { x: 8, y: 4 },
+        padding: { x: 16, y: 8 },
       })
       .setOrigin(1, 0)
       .setScrollFactor(0)
@@ -465,9 +499,9 @@ export class BattleScene extends Phaser.Scene {
 
     // 小地图放右下角：雷达半径 300 世界像素（大于半个屏幕宽），符合"雷达范围大于可视范围"的设计
     this.minimap = new Minimap(this, this.state.walls, {
-      x: GAME_WIDTH - 96,
-      y: GAME_HEIGHT - 96,
-      size: 88,
+      x: GAME_WIDTH - 192,
+      y: GAME_HEIGHT - 192,
+      size: 176,
       worldRadius: 300,
     });
   }
@@ -480,8 +514,12 @@ export class BattleScene extends Phaser.Scene {
       if (!sprite) {
         continue;
       }
-      // 被墙体挡住的敌人不渲染；自己永远可见
-      sprite.setVisible(this.isFighterVisible(fighter));
+      // 视野外或被墙挡住的敌人不渲染，视野内敌人置于压暗遮罩上方。
+      const visible = this.isFighterVisible(fighter);
+      sprite.setVisible(visible);
+      if (fighter.id !== this.localPlayerId) {
+        sprite.setDepth(visible ? 850 : 10);
+      }
       sprite.setPosition(fighter.x, fighter.y);
       if (!fighter.isDummy) {
         sprite.setFlipX(fighter.facingX < 0);
@@ -507,7 +545,24 @@ export class BattleScene extends Phaser.Scene {
     if (!viewer) {
       return false;
     }
-    return hasLineOfSight(this.state.walls, viewer.x, viewer.y, fighter.x, fighter.y);
+    return (
+      this.isInVisionCone(viewer, fighter.x, fighter.y) &&
+      hasLineOfSight(this.state.walls, viewer.x, viewer.y, fighter.x, fighter.y)
+    );
+  }
+
+  private isInVisionCone(viewer: PlayerState, x: number, y: number): boolean {
+    const aim = this.getAimWorldPoint();
+    const aimX = aim.x - viewer.x;
+    const aimY = aim.y - viewer.y;
+    const targetX = x - viewer.x;
+    const targetY = y - viewer.y;
+    if (Math.hypot(aimX, aimY) < 1 || Math.hypot(targetX, targetY) < 1) {
+      return true;
+    }
+    const cosine =
+      (aimX * targetX + aimY * targetY) / (Math.hypot(aimX, aimY) * Math.hypot(targetX, targetY));
+    return cosine >= Math.cos(VISION_CORE_HALF);
   }
 
   /** 子弹与 state.bullets 对齐：state 里有的保证有贴图，消失的销毁 */
@@ -569,6 +624,60 @@ export class BattleScene extends Phaser.Scene {
       sprite.destroy();
       this.pickupSprites.delete(id);
     }
+  }
+
+  /**
+   * 绑定暂停/重开热键（ESC / P / R）。
+   *
+   * 用 window 的捕获阶段监听原生事件，而不是 Phaser 的 KeyboardPlugin：
+   * - 捕获阶段先于冒泡，任何后加的 preventDefault 都拦不住；
+   * - 不必担心 `event.defaultPrevented` 被 Phaser 丢弃。
+   * 监听器在场景 shutdown 时解绑，避免重开后叠加多个。
+   */
+  private bindHotkeys(): void {
+    if (this.hotkeyHandler) {
+      window.removeEventListener('keydown', this.hotkeyHandler, true);
+    }
+
+    this.hotkeyHandler = (event: KeyboardEvent): void => {
+      // 场景没在跑（已暂停 / 已被结算界面顶掉）时不要抢键：
+      // 暂停界面自己也要用 ESC 继续，这里必须放行，否则会被永久卡住。
+      if (!this.scene.isActive()) {
+        return;
+      }
+
+      // 输入框里打字时不要抢键：ESC 例外（用于脱离输入框）
+      const target = event.target as HTMLElement | null;
+      const isTyping = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.openPause();
+        return;
+      }
+
+      if (isTyping) {
+        return;
+      }
+
+      if (event.key === 'p' || event.key === 'P') {
+        event.preventDefault();
+        this.openPause();
+      } else if (event.key === 'r' || event.key === 'R') {
+        event.preventDefault();
+        this.restartRound();
+      }
+    };
+
+    window.addEventListener('keydown', this.hotkeyHandler, true);
+
+    this.events.once('shutdown', () => {
+      if (this.hotkeyHandler) {
+        window.removeEventListener('keydown', this.hotkeyHandler, true);
+        this.hotkeyHandler = null;
+      }
+    });
   }
 
   /** R：重开一局（保留角色与时长参数） */
@@ -719,6 +828,10 @@ export class BattleScene extends Phaser.Scene {
    * 正确做法是建一个不自动发射的发射器，命中时调用 explode(数量, x, y) 借它喷一下。
    */
   private createEffects(): void {
+    // 视野遮罩画在世界坐标里（不钉屏）：相机每帧会插值滚动，
+    // 若钉屏后再减 scrollX/scrollY，用的还是上一帧的相机位置，阴影会整体相对地图抖动几个像素，
+    // 表现为"阴影边缘和障碍物对不齐"。跟着世界一起动就没有这个问题。
+    this.visionOverlay = this.add.graphics().setDepth(800);
     this.impactEmitter = this.add.particles(0, 0, TEX.particle, {
       /** 每颗粒子活多久（毫秒） */
       lifespan: 260,
@@ -774,17 +887,19 @@ export class BattleScene extends Phaser.Scene {
       bar.clear();
       if (!this.isFighterVisible(fighter)) {
         // 看不见的敌人，血条也一起隐藏
+        bar.setDepth(15);
         continue;
       }
+      bar.setDepth(850);
 
-      const barWidth = 40;
-      const barHeight = 4;
+      const barWidth = 80;
+      const barHeight = 8;
       const left = fighter.x - barWidth / 2;
-      const top = fighter.y - 36;
+      const top = fighter.y - 72;
 
       // 底板
       bar.fillStyle(0x000000, 0.6);
-      bar.fillRect(left - 1, top - 1, barWidth + 2, barHeight * 2 + 4);
+      bar.fillRect(left - 2, top - 2, barWidth + 4, barHeight * 2 + 8);
 
       // 生命条
       bar.fillStyle(0x40161d, 1);
@@ -794,11 +909,11 @@ export class BattleScene extends Phaser.Scene {
 
       // 护盾条（与生命分开，和 HUD 保持一致）
       bar.fillStyle(0x152a3d, 1);
-      bar.fillRect(left, top + barHeight + 2, barWidth, barHeight);
+      bar.fillRect(left, top + barHeight + 4, barWidth, barHeight);
       bar.fillStyle(0x4dc3ff, 1);
       bar.fillRect(
         left,
-        top + barHeight + 2,
+        top + barHeight + 4,
         barWidth * (fighter.shield / fighter.stats.maxShield),
         barHeight,
       );
@@ -817,6 +932,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private updateHud(): void {
+    this.updateVisionOverlay();
     const player = this.findLocalPlayer();
     if (!player) {
       // 联机刚入房、还没收到快照：先不画 HUD，避免读到不存在的玩家
@@ -825,14 +941,14 @@ export class BattleScene extends Phaser.Scene {
       this.timerText.setText('');
       return;
     }
-    const barWidth = 132;
-    const barHeight = 6;
-    const left = 8;
-    const top = 8;
+    const barWidth = 264;
+    const barHeight = 12;
+    const left = 16;
+    const top = 16;
 
     this.hudGraphics.clear();
     this.hudGraphics.fillStyle(0x000000, 0.55);
-    this.hudGraphics.fillRect(left - 2, top - 2, barWidth + 4, barHeight * 2 + 8);
+    this.hudGraphics.fillRect(left - 4, top - 4, barWidth + 8, barHeight * 2 + 16);
 
     // 生命条
     this.hudGraphics.fillStyle(0x40161d, 1);
@@ -868,7 +984,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.hudText.setText([
       `HP ${Math.ceil(player.hp)}/${player.stats.maxHp}    护盾 ${Math.floor(player.shield)}/${player.stats.maxShield}`,
-      `子弹 ${this.state.bullets.length}    存活对手 ${aliveOpponents}    击倒 ${player.score.kills}    帧 ${this.state.tick}`,
+      `存活对手 ${aliveOpponents}    击倒 ${player.score.kills}`,
       buffText,
     ]);
 
@@ -883,6 +999,217 @@ export class BattleScene extends Phaser.Scene {
     this.updateMinimap(player);
   }
 
+  private updateVisionOverlay(): void {
+    const viewer = this.findLocalPlayer();
+    const overlay = this.visionOverlay;
+    overlay.clear();
+    if (!viewer) {
+      return;
+    }
+
+    const aim = this.getAimWorldPoint();
+    const aimX = aim.x - viewer.x;
+    const aimY = aim.y - viewer.y;
+    const aimAngle = Math.hypot(aimX, aimY) < 1 ? 0 : Math.atan2(aimY, aimX);
+
+    // 遮罩只需盖住屏幕：按屏幕四角算半径，比用整张地图的对角线更省填充面积、也少些浮点抖动
+    const coverRadius = this.getCoverRadius(viewer);
+    const centerX = viewer.x;
+    const centerY = viewer.y;
+
+    // 射线角度 = 均匀采样 + 墙角射线。
+    // 只做均匀采样时，亮区边界会停在"某条射线正好打到的墙面"上，与墙角差半个角步长，
+    // 表现为阴影边缘和障碍物边缘对不齐；补上墙角射线（两侧各紧贴一条）后，
+    // 亮区边界就能精确贴合墙角。
+    const offsets: number[] = [];
+    const rayCount = Math.ceil(VISION_OUTER_HALF * 2 * VISION_RAYS_PER_RADIAN);
+    for (let i = 0; i <= rayCount; i += 1) {
+      offsets.push(-VISION_OUTER_HALF + (VISION_OUTER_HALF * 2 * i) / rayCount);
+    }
+    for (const wall of this.state.walls) {
+      for (const cornerX of [wall.x, wall.x + wall.width]) {
+        for (const cornerY of [wall.y, wall.y + wall.height]) {
+          const offset = Phaser.Math.Angle.Wrap(
+            Math.atan2(cornerY - viewer.y, cornerX - viewer.x) - aimAngle,
+          );
+          if (Math.abs(offset) > VISION_OUTER_HALF) {
+            continue;
+          }
+          offsets.push(offset - CORNER_EPSILON, offset + CORNER_EPSILON);
+        }
+      }
+    }
+    offsets.sort((a, b) => a - b);
+
+    // 每条射线：可视距离。终点取「墙的外沿」，阴影从墙轮廓之后开始。
+    const distances: number[] = [];
+    for (const offset of offsets) {
+      distances.push(
+        Math.min(
+          this.getVisibilityDistance(viewer.x, viewer.y, aimAngle + offset, coverRadius),
+          coverRadius,
+        ),
+      );
+    }
+
+    const angleAt = (index: number): number => aimAngle + offsets[index];
+    const pointAt = (angle: number, radius: number): [number, number] => [
+      centerX + Math.cos(angle) * radius,
+      centerY + Math.sin(angle) * radius,
+    ];
+
+    /**
+     * 逐条射线区间绘制，alpha 由该区间的**连续角度**决定。
+     *
+     * 之前按 10 个「渐暗档」绘制，相邻档位的 alpha 是跳变的，
+     * 于是每一档的边界都变成一条从玩家向外发散的硬边（截图里那几条斜线）。
+     * 改成按区间连续插值后，相邻区间 alpha 只差千分之几，肉眼看不到接缝。
+     *
+     * 分两遍画，避免每个三角形都切换一次填充色（那会让 draw call 翻几倍）：
+     *  第一遍：所有「可见边界之外」的梯形，统一满强度 —— 墙后一律不透光；
+     *  第二遍：所有「可见边界之内」的三角形 —— 核心视野内跳过，向外连续加深。
+     */
+    const nearPoints: Array<[[number, number], [number, number]]> = [];
+    for (let i = 0; i < offsets.length - 1; i += 1) {
+      nearPoints.push([
+        pointAt(angleAt(i), distances[i]),
+        pointAt(angleAt(i + 1), distances[i + 1]),
+      ]);
+    }
+
+    overlay.fillStyle(0x000000, FOG_ALPHA);
+    for (let i = 0; i < nearPoints.length; i += 1) {
+      const [nearA, nearB] = nearPoints[i];
+      const farA = pointAt(angleAt(i), coverRadius);
+      const farB = pointAt(angleAt(i + 1), coverRadius);
+      overlay.fillTriangle(nearA[0], nearA[1], farA[0], farA[1], farB[0], farB[1]);
+      overlay.fillTriangle(nearA[0], nearA[1], farB[0], farB[1], nearB[0], nearB[1]);
+    }
+
+    // 渐暗区按 32 级 alpha 分组绘制：32 级在 25° 内每级约 0.8°，肉眼看不出台阶，
+    // 却能把几百次填充色切换压缩到几十次。
+    const ALPHA_LEVELS = 32;
+    const buckets = new Map<number, number[]>();
+    for (let i = 0; i < nearPoints.length; i += 1) {
+      const midAngle = Math.abs(
+        Phaser.Math.Angle.Wrap((angleAt(i) + angleAt(i + 1)) / 2 - aimAngle),
+      );
+      if (midAngle <= VISION_CORE_HALF) {
+        continue;
+      }
+      const t =
+        midAngle >= VISION_OUTER_HALF
+          ? 1
+          : (midAngle - VISION_CORE_HALF) / (VISION_OUTER_HALF - VISION_CORE_HALF);
+      const level = Math.min(ALPHA_LEVELS, Math.ceil(t * ALPHA_LEVELS));
+      const list = buckets.get(level);
+      if (list) {
+        list.push(i);
+      } else {
+        buckets.set(level, [i]);
+      }
+    }
+
+    for (const [level, indices] of buckets) {
+      overlay.fillStyle(0x000000, (FOG_ALPHA * level) / ALPHA_LEVELS);
+      for (const i of indices) {
+        const [nearA, nearB] = nearPoints[i];
+        overlay.fillTriangle(centerX, centerY, nearA[0], nearA[1], nearB[0], nearB[1]);
+      }
+    }
+
+    // 3) 外沿之外：整片暗色（覆盖到屏幕角）
+    overlay.fillStyle(0x000000, FOG_ALPHA);
+    overlay.beginPath();
+    overlay.moveTo(centerX, centerY);
+    const outsideSteps = 128;
+    for (let i = 0; i <= outsideSteps; i += 1) {
+      const angle =
+        aimAngle + VISION_OUTER_HALF + (Math.PI * 2 - VISION_OUTER_HALF * 2) * (i / outsideSteps);
+      overlay.lineTo(...pointAt(angle, coverRadius));
+    }
+    overlay.closePath();
+    overlay.fillPath();
+  }
+
+  /** 遮罩半径：覆盖到屏幕四角即可，留一点余量防止相机移动时露边 */
+  private getCoverRadius(viewer: PlayerState): number {
+    const camera = this.cameras.main;
+    const corners: Array<[number, number]> = [
+      [camera.scrollX, camera.scrollY],
+      [camera.scrollX + camera.width, camera.scrollY],
+      [camera.scrollX, camera.scrollY + camera.height],
+      [camera.scrollX + camera.width, camera.scrollY + camera.height],
+    ];
+
+    let radius = 0;
+    for (const [cornerX, cornerY] of corners) {
+      radius = Math.max(radius, Math.hypot(cornerX - viewer.x, cornerY - viewer.y));
+    }
+    return radius + SHADOW_MARGIN;
+  }
+
+  /**
+   * 遮挡视线的墙：排除地图四周的边界墙。
+   *
+   * 边界墙厚一整个 tile，浅角度射线会「走在墙体内」很久才穿出，
+   * 深角度射线则很快穿出，于是屏幕边缘会出现一条与任何障碍物都无关的水平/垂直阴影分界。
+   * 边界墙外本来就没有东西可看，让它遮挡只会产生这种假阴影。
+   */
+  private getOccluders(): Rect[] {
+    if (!this.occluders) {
+      const { mapWidth, mapHeight } = this.state;
+      this.occluders = this.state.walls.filter(
+        (wall) =>
+          wall.x > 0 &&
+          wall.y > 0 &&
+          wall.x + wall.width < mapWidth &&
+          wall.y + wall.height < mapHeight,
+      );
+    }
+    return this.occluders;
+  }
+
+  /**
+   * 这条射线能照多远。
+   *
+   * 返回的是「最近那块墙的远侧」，而不是近侧：
+   * 亮的区域要包含整块墙本身，阴影从墙的外轮廓之后开始。
+   * 若取近侧，阴影会把墙切掉一半，视觉上阴影边缘与障碍物轮廓永远差一截。
+   */
+  private getVisibilityDistance(x: number, y: number, angle: number, maxDistance: number): number {
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    let nearestEntry = maxDistance;
+    let wallExit = maxDistance;
+
+    for (const wall of this.getOccluders()) {
+      if (Math.abs(dx) < 1e-9 && (x < wall.x || x > wall.x + wall.width)) {
+        continue;
+      }
+      if (Math.abs(dy) < 1e-9 && (y < wall.y || y > wall.y + wall.height)) {
+        continue;
+      }
+      const t1 = Math.abs(dx) < 1e-9 ? -Infinity : (wall.x - x) / dx;
+      const t2 = Math.abs(dx) < 1e-9 ? Infinity : (wall.x + wall.width - x) / dx;
+      const t3 = Math.abs(dy) < 1e-9 ? -Infinity : (wall.y - y) / dy;
+      const t4 = Math.abs(dy) < 1e-9 ? Infinity : (wall.y + wall.height - y) / dy;
+      const entry = Math.max(Math.min(t1, t2), Math.min(t3, t4));
+      const exit = Math.min(Math.max(t1, t2), Math.max(t3, t4));
+
+      // 只考虑射线前方真正穿过的墙（entry > 0），且取最近的那一块
+      if (exit < 0 || entry > exit || entry <= 0) {
+        continue;
+      }
+      if (entry < nearestEntry) {
+        nearestEntry = entry;
+        wallExit = exit;
+      }
+    }
+
+    return Math.max(0, Math.min(wallExit, maxDistance));
+  }
+
   /**
    * 小地图（需求 2.4：开阔区雷达 + 掩体后记忆）。
    *
@@ -892,7 +1219,6 @@ export class BattleScene extends Phaser.Scene {
    */
   private updateMinimap(viewer: PlayerState): void {
     const markers: MinimapMarker[] = [];
-    const now = this.state.timeMs;
 
     for (const other of this.state.players) {
       if (other.id === viewer.id || !other.alive) {
@@ -900,20 +1226,8 @@ export class BattleScene extends Phaser.Scene {
       }
 
       if (this.isFighterVisible(other)) {
-        this.lastKnownPositions.set(other.id, { x: other.x, y: other.y, atMs: now });
         markers.push({ x: other.x, y: other.y, color: 0xff4d5e, alpha: 1 });
-        continue;
       }
-
-      const memory = this.lastKnownPositions.get(other.id);
-      if (!memory) {
-        continue;
-      }
-      if (now - memory.atMs > MEMORY_MARKER_LIFETIME) {
-        this.lastKnownPositions.delete(other.id);
-        continue;
-      }
-      markers.push({ x: memory.x, y: memory.y, color: 0xff4d5e, alpha: 0.45, isMemory: true });
     }
 
     this.minimap.update({ x: viewer.x, y: viewer.y }, markers);
@@ -922,5 +1236,18 @@ export class BattleScene extends Phaser.Scene {
   /** 找本地玩家：联机还没收到快照时可能不存在，所以返回可能为 null */
   private findLocalPlayer(): PlayerState | null {
     return this.state.players.find((player) => player.id === this.localPlayerId) ?? null;
+  }
+
+  /**
+   * 光标当前对应的世界坐标。
+   *
+   * 每次实时按当前相机反算，**不要**直接读 `pointer.worldX / worldY`：
+   * 那两个值只在指针事件触发命中测试时才刷新，相机跟随玩家滚动而鼠标没动时会停在旧值上，
+   * 导致瞄准方向偏移（"子弹落点和光标不一致"，且只在移动时偶发）。
+   */
+  private getAimWorldPoint(): Phaser.Math.Vector2 {
+    const pointer = this.input.activePointer;
+    this.cameras.main.getWorldPoint(pointer.x, pointer.y, this.aimPoint);
+    return this.aimPoint;
   }
 }

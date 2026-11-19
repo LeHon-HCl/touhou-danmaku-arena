@@ -1,5 +1,6 @@
 import type { BattleConfig } from './config/types';
 import { ITEMS } from './config/items';
+import { resolveCharacterId } from './content/characters';
 import type { WorldSnapshot } from './protocol';
 import type { BattleState, PlayerState } from './types';
 import { createFighter } from './world';
@@ -91,7 +92,7 @@ export function applySnapshotToState(
     // 新出现的单位：用配置里的数值造一个，再用快照覆盖位置与血量
     const stats = snapshotPlayer.isDummy
       ? config.dummy
-      : config.characters[snapshotPlayer.characterId === 'marisa' ? 'marisa' : 'reimu'];
+      : config.characters[resolveCharacterId(snapshotPlayer.characterId)];
     const created = createFighter(
       snapshotPlayer.id,
       snapshotPlayer.characterId,

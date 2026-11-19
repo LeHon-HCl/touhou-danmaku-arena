@@ -2,15 +2,9 @@ export { battleConfig } from './match';
 export { characters } from './characters';
 export { ITEMS, ITEM_LIST, pickWeightedItemId } from './items';
 export type { ItemConfig, ItemEffect } from './items';
-export {
-  MAP_COLUMNS,
-  MAP_ROWS,
-  MAP_TILE_SIZE,
-  MAP_WALL_BLOCKS,
-  PLAYER_SPAWN_TILE,
-  DUMMY_SPAWN_TILES,
-  ITEM_SPAWN_TILES,
-  MULTI_SPAWN_TILES,
-} from './map-shrine';
+/**
+ * 地图定义已迁到 `content/maps/`（GameMap 类）。
+ * 这里只保留默认地图的引用，方便老的 `MAP_TILE_SIZE` 用法平滑过渡。
+ */
+export { DEFAULT_MAP, DEFAULT_MAP_TILE_SIZE } from './map';
 export type { BattleConfig, CharacterConfig, DummyConfig, ItemSpawnConfig } from './types';
-export type { TileBlock } from './map-shrine';

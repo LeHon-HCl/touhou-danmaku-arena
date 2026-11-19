@@ -22,7 +22,15 @@ export type {
   Vec2,
 } from './types';
 
-export { ITEMS, ITEM_LIST, battleConfig, characters, pickWeightedItemId } from './config';
+export {
+  ITEMS,
+  ITEM_LIST,
+  DEFAULT_MAP,
+  DEFAULT_MAP_TILE_SIZE,
+  battleConfig,
+  characters,
+  pickWeightedItemId,
+} from './config';
 export type {
   BattleConfig,
   CharacterConfig,
@@ -30,8 +38,37 @@ export type {
   ItemConfig,
   ItemEffect,
   ItemSpawnConfig,
-  TileBlock,
 } from './config';
+
+/**
+ * 可玩内容（角色 / 地图）的注册表。
+ * 加角色或加地图只动 `content/` 目录，见 docs/extending-content.md。
+ */
+export {
+  CHARACTERS,
+  CHARACTER_COUNT,
+  CHARACTER_LIST,
+  DEFAULT_CHARACTER_ID,
+  DEFAULT_MAP_ID,
+  MAPS,
+  MAP_LIST,
+  SELECTABLE_CHARACTERS,
+  getCharacter,
+  getMap,
+  isCharacterId,
+  isMapId,
+} from './content';
+export type {
+  Character,
+  CharacterInit,
+  CharacterPlaceholder,
+  GameMap,
+  MapId,
+  MapInit,
+  TileBlock,
+  TilePlaceholder,
+  TilePoint,
+} from './content';
 
 export {
   PLAYER_ID,
@@ -43,6 +80,8 @@ export {
   respawnFighter,
 } from './world';
 export type { CreateBattleOptions } from './world';
+export { AI_SKILLS, AiController } from './ai';
+export type { AiSkill } from './ai';
 export { PROTOCOL_VERSION, parseClientMessage, sanitizeInput } from './protocol';
 export type {
   ClientMessage,

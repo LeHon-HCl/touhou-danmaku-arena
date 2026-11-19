@@ -1,5 +1,5 @@
 import { ITEMS, pickWeightedItemId } from '../config/items';
-import { ITEM_SPAWN_TILES, MAP_TILE_SIZE } from '../config/map-shrine';
+import { getMap } from '../content/maps';
 import type { BattleConfig } from '../config/types';
 import type { BattleState, ItemId, PickupState, PlayerModifiers, PlayerState } from '../types';
 import { isPointInRects } from './projectile';
@@ -137,15 +137,9 @@ export function updateItemSpawns(
 
   // 1. 固定点
   if (state.timeMs >= state.nextFixedItemSpawnAtMs) {
-    const tile = ITEM_SPAWN_TILES[Math.floor(random() * ITEM_SPAWN_TILES.length)];
-    if (tile) {
-      spawnPickup(
-        state,
-        config,
-        tile.column * MAP_TILE_SIZE + MAP_TILE_SIZE / 2,
-        tile.row * MAP_TILE_SIZE + MAP_TILE_SIZE / 2,
-        pickWeightedItemId(random),
-      );
+    const point = getMap(state.mapId).randomItemSpawnPoint(random);
+    if (point) {
+      spawnPickup(state, config, point.x, point.y, pickWeightedItemId(random));
     }
     state.nextFixedItemSpawnAtMs = state.timeMs + spawnConfig.fixedSpawnInterval;
   }

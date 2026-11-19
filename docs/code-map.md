@@ -43,7 +43,9 @@ d:\TDA
 │     ├─ world.ts            创建世界、地图墙体、重生
 │     ├─ step.ts             固定步长推进（整个游戏唯一的"战斗逻辑入口"）
 │     ├─ index.ts            shared 对外出口（client 只从这里 import）
-│     ├─ config/             数值配置表（唯一真源）
+│     ├─ content/            ⭐ 可玩内容：角色 Character / 地图 GameMap + 注册表
+│     ├─ ai/                 ⭐ 单人模式 AI 对手（只产出 PlayerInput，不碰判定）
+│     ├─ config/             数值配置（角色表由 content/ 派生）
 │     └─ sim/                具体规则：移动、命中、伤害、道具
 ├─ client/                   Phaser 4 客户端（渲染 / 输入 / 音频 / 场景）
 │  ├─ index.html             画布容器、昵称输入框、页面样式
@@ -52,9 +54,14 @@ d:\TDA
 │  └─ src/
 │     ├─ main.ts             创建 Phaser.Game、注册场景、整数倍缩放
 │     ├─ scenes/             各个界面（大厅 / 选人 / 战斗 / 暂停 / 结算）
+│     ├─ assets/             真实素材加载 + 素材清单（文件名 → 贴图/音频 key）
 │     ├─ input/              键鼠 → PlayerInput
 │     ├─ render/             占位贴图、整数倍缩放
 │     └─ audio/              程序化合成音效 + 2D 定位播放
+├─ assets/                   ⭐ 素材目录（改图改音只动这里）
+│  ├─ README.md              改图改音指南（文件名、尺寸、时长、FAQ）
+│  ├─ images/                图片成品（PNG），缺失时回退占位图
+│  └─ audio/                 音频成品（.ogg / .mp3），缺失时回退合成音
 ├─ scripts/
 │  └─ check-shared-boundaries.mjs   lint:boundary：检查 shared/ 没有违规依赖
 ├─ dist/                     构建产物（不入库）
@@ -75,21 +82,48 @@ d:\TDA
 | `step.ts`  | **核心**：推进一帧。顺序是 增益倒计时 → 移动 → 瞄准 → 回盾 → 开火 → 子弹推进与命中 → 道具刷新/拾取 → 清理                                                                                 | 想改"每帧的计算顺序"或加新的每帧规则         |
 | `index.ts` | 对外出口。客户端只从 `@shared` 导入，不直接深挖子路径                                                                                                                                     | 新文件要让客户端用，就在这里导出             |
 
-### 3.2 `config/`（数值都在这里，改平衡不用碰逻辑）
+### 3.2 `content/`（可玩内容：加角色 / 加地图只动这里）
+
+| 文件                              | 作用                                                                       |
+| --------------------------------- | -------------------------------------------------------------------------- |
+| `content/characters/character.ts` | `Character` 类：数值 + 贴图 key + 素材路径 + 占位图配色，成套校验          |
+| `content/characters/index.ts`     | 角色注册表 `CHARACTERS`；`CharacterId` 由此推导，`getCharacter()` 回退默认 |
+| `content/characters/reimu.ts` 等  | 每个角色一个文件                                                           |
+| `content/maps/map.ts`             | `GameMap` 类：尺寸、墙体块、出生点、道具点、瓦片贴图；负责瓦片→像素换算    |
+| `content/maps/index.ts`           | 地图注册表 `MAPS`；`getMap()` 回退默认地图                                 |
+| `content/maps/shrine.ts` 等       | 每张地图一个文件                                                           |
+
+> 完整步骤与检查清单见 [extending-content.md](./extending-content.md)。
+
+### 3.3 `ai/`（单人模式的 AI 对手）
+
+| 文件                  | 作用                                                                                             |
+| --------------------- | ------------------------------------------------------------------------------------------------ |
+| `ai/ai-controller.ts` | `AiController`：为 `isAi` 单位产出 `PlayerInput`（瞄准、走位、开火、绕障）；`AI_SKILLS` 三档难度 |
+| `ai/index.ts`         | 出口                                                                                             |
+
+**关键设计**：AI **不碰任何判定**，只输出输入意图，交给同一个 `step()`。
+所以 AI 与真人走完全相同的移动/命中/伤害规则，不会出现"AI 打人特别疼"这类两套逻辑的问题。
+
+行为分层：选目标（只打真人）→ 瞄准（反应延迟 + 正弦抖动 + 弹道预判）→ 走位（保持理想距离 + 侧向游走 + 边缘排斥）→ 绕障（前方被挡时左右偏转试探）→ 开火（有视线且瞄得准）。
+
+调难度改 `AI_SKILLS`（`aimJitter` / `reactionMs` / `preferredRange` 等），不需要改逻辑。
+
+### 3.4 `config/`（数值都在这里，改平衡不用碰逻辑）
 
 | 文件                   | 作用                                                                                                         |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `config/types.ts`      | 配置的类型：`CharacterConfig`、`BattleConfig`、`ItemSpawnConfig` 等                                          |
-| `config/characters.ts` | 灵梦 / 魔理沙的 HP、护盾、移速、射速、伤害、弹速、重生延迟                                                   |
+| `config/characters.ts` | 从 `content/characters` **派生**的角色数值表（不再手写，加角色不用改）                                       |
 | `config/items.ts`      | **道具配置表 + 原子效果类型 + 按权重随机抽取**。新增道具只要动这里（必要时在 `sim/items.ts` 加一个效果分支） |
 | `config/match.ts`      | `battleConfig` 汇总：逻辑帧间隔、假人参数、道具刷新参数                                                      |
-| `config/map-shrine.ts` | 地图尺寸（40×24 瓦片，32px/瓦片）、墙体块、出生点、道具刷新点                                                |
+| `config/map.ts`        | 默认地图的便捷引用（`DEFAULT_MAP` / `DEFAULT_MAP_TILE_SIZE`）                                                |
 | `config/index.ts`      | 配置的统一出口                                                                                               |
 
 > 配置约定（来自 dev-conventions 第 6 章）：字段名全小写驼峰、时间一律毫秒、距离一律像素、
 > 速度一律像素/秒；**每个字段必须有中文说明和建议范围**。
 
-### 3.3 `sim/`（具体规则，每个文件只干一件事）
+### 3.5 `sim/`（具体规则，每个文件只干一件事）
 
 | 文件                | 作用                                                           | 关键点                                                                 |
 | ------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -105,12 +139,12 @@ d:\TDA
 
 ### 4.1 入口与配置
 
-| 文件             | 作用                                                                                                              |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `index.html`     | `#game` 画布容器 + `#nickname-wrap` 昵称输入框（原生 DOM，只在大厅显示）+ 页面底色与 `image-rendering: pixelated` |
-| `main.ts`        | 创建 `Phaser.Game`：逻辑分辨率 640×360、`render.roundPixels=false`、整数倍缩放；按顺序注册 6 个场景               |
-| `vite.config.ts` | root 设为 `client/`，把 `@shared` 指向 `../shared/src`，并允许 dev server 读取仓库根目录                          |
-| `tsconfig.json`  | 客户端 TS 配置；`paths` 里配 `@shared`，`types` 含 `vite/client` 与 `node`（只给 vite.config 用）                 |
+| 文件             | 作用                                                                                                                             |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `index.html`     | `#game` 画布容器 + `#nickname-wrap` 昵称输入框（原生 DOM，只在大厅显示）+ 页面底色与 `image-rendering: pixelated`                |
+| `main.ts`        | 创建 `Phaser.Game`：逻辑分辨率 1280×720、`render.roundPixels=false`、整数倍缩放；按顺序注册 6 个场景                             |
+| `vite.config.ts` | root 设为 `client/`，`publicDir` 指向仓库根目录的 `assets/`，把 `@shared` 指向 `../shared/src`，并允许 dev server 读取仓库根目录 |
+| `tsconfig.json`  | 客户端 TS 配置；`paths` 里配 `@shared`，`types` 含 `vite/client` 与 `node`（只给 vite.config 用）                                |
 
 ### 4.2 `scenes/`（界面流程）
 
@@ -118,9 +152,9 @@ d:\TDA
 | --------------------------- | ------------------ | ---------------------------------------------------------------------------- |
 | `scene-keys.ts`             | —                  | 所有场景 key 的唯一来源，避免各处手写字符串、也避免场景之间循环 import       |
 | `scene-data.ts`             | —                  | 场景传参的类型（`BattleSceneData` / `ResultSceneData` 等）                   |
-| `boot-scene.ts`             | `boot`             | 生成占位贴图 + 合成并解码音效，就绪后进大厅                                  |
-| `menu-scene.ts`             | `menu`             | 大厅：昵称、练习场（自由）/ 练习挑战（60 秒）入口；房间按钮置灰标注 1.1      |
-| `character-select-scene.ts` | `character-select` | 选人：← → 切换、Enter 确认、可点击卡片；数值从 `config/characters.ts` 读     |
+| `boot-scene.ts`             | `boot`             | 加载 `assets/` 真实素材 → 补齐缺失的占位贴图/合成音 → 进大厅                 |
+| `menu-scene.ts`             | `menu`             | 大厅：昵称、练习场（自由）/ 挑战 AI（60 秒）/ 联机入口                       |
+| `character-select-scene.ts` | `character-select` | 选人：← → 切换、Enter 确认、可点击卡片；数值从 `characters` 注册表读         |
 | `battle-scene.ts`           | `battle`           | **核心场景**：采样输入 → 30Hz 调 `step()` → 事件转音效/粒子 → 同步画面 → HUD |
 | `pause-scene.ts`            | `pause`            | ESC 暂停层：继续 / 重开 / 返回大厅。战斗场景被 `pause()` 冻住                |
 | `result-scene.ts`           | `result`           | 结算：击倒 / 阵亡 / 造成伤害 / 拾取道具，再来一局 / 返回大厅                 |
@@ -128,30 +162,46 @@ d:\TDA
 `battle-scene.ts` 内部的阅读顺序建议：
 
 1. `create()` —— 一次性初始化（造世界、搭画面、拿音效）
-2. `update()` —— 每帧的固定流程（含固定步长累加器）
+2. `update()` —— 每帧的固定流程（含固定步长累加器；单人模式在这里喂 AI 输入）
 3. `syncSprites()` / `syncPickups()` / `drawDummyBars()` —— 数据 → 画面
 4. `handleEvents()` —— 事件 → 声音与特效
 5. `updateHud()` —— 血条、增益、倒计时
 
-### 4.3 `input/`
+> ⚠️ **暂停/重开热键不走 Phaser 的 KeyboardPlugin**：Phaser 的 `KeyboardManager`
+> 遇到 `event.defaultPrevented` 会丢弃事件，而 ESC 常被宿主或浏览器先 preventDefault，
+> 表现为"ESC 时灵时不灵"。所以 `battle-scene.ts` 与 `pause-scene.ts` 都在
+> **window 的捕获阶段**直接监听原生 keydown，并在 `shutdown` 时解绑。
+> 修改暂停逻辑时不要退回 `input.keyboard.on('keydown-ESC')`。
+
+### 4.3 `assets/`（素材加载）
+
+| 文件          | 作用                                                                                                                                                                 |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `manifest.ts` | 素材清单：每个贴图/音频 key 对应 `assets/` 下哪个文件、期望尺寸。**从角色/地图注册表收集，加内容不用改**                                                             |
+| `loader.ts`   | 用 fetch/img 自己加载 `assets/images`、`assets/audio`；同名文件自动换扩展名（png/jpg/webp…）、尺寸不符时等比缩放居中，文件缺失时静默跳过，返回加载报告供占位逻辑兜底 |
+
+> 为什么不直接用 Phaser 的 `this.load.image()`：那套 Loader 把「文件不存在」当加载错误，
+> 占位素材阶段每次启动会刷一屏报错。这里的语义是「没文件是正常情况」。
+
+### 4.4 `input/`
 
 | 文件                      | 作用                                                                                                  |
 | ------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `keyboard-mouse-input.ts` | 只做一件事：把 WASD 与光标位置翻译成 `PlayerInput`。将来接手柄/触屏/网络，替换它即可，`step()` 不用改 |
 
-### 4.4 `render/`
+### 4.5 `render/`
 
-| 文件                      | 作用                                                                                                                             |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `placeholder-textures.ts` | 用 `Graphics.generateTexture` 生成全部占位贴图（角色 48×48、子弹 12×12、道具 24×24、瓦片 32×32、粒子 4×4）。**换真素材只改这里** |
-| `integer-scale.ts`        | 逻辑分辨率 640×360，按整数倍放大，非整数倍留黑边（art-spec 2.2）                                                                 |
+| 文件                      | 作用                                                                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `placeholder-textures.ts` | 用 `Graphics.generateTexture` 生成占位贴图（角色 / 瓦片 / 道具 / 子弹 / 粒子），**只补缺失的那些**；角色与瓦片遍历注册表，加内容不用改这里 |
+| `integer-scale.ts`        | 逻辑分辨率 1280×720，按整数倍放大，非整数倍留黑边（art-spec 2.2）                                                                          |
 
-### 4.5 `audio/`
+### 4.6 `audio/`
 
-| 文件               | 作用                                                                                       |
-| ------------------ | ------------------------------------------------------------------------------------------ |
-| `wav-synth.ts`     | 手写 WAV 头 + 采样循环，把一段波形变成 `ArrayBuffer`                                       |
-| `audio-manager.ts` | 合成 6 个音效并 `sound.decodeAudio` 注册；播放时按听者位置算左右声道与距离衰减；同音效限流 |
+| 文件               | 作用                                                                                      |
+| ------------------ | ----------------------------------------------------------------------------------------- |
+| `wav-synth.ts`     | 手写 WAV 头 + 采样循环，把一段波形变成 `ArrayBuffer`（占位音）                            |
+| `audio-manager.ts` | 先用 `assets/audio/` 的文件；缺的才合成。播放时按听者位置算左右声道与距离衰减；同音效限流 |
 
 ---
 
@@ -201,15 +251,18 @@ graph LR
 
 | 我想…                                | 改这里                                                                                            |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| 调角色血量 / 护盾 / 移速 / 射速      | `shared/src/config/characters.ts`                                                                 |
+| 调角色血量 / 护盾 / 移速 / 射速      | `shared/src/content/characters/<角色>.ts` 的 `stats`（见 extending-content.md）                   |
+| **加一个新角色**                     | 新建 `shared/src/content/characters/<id>.ts` + 在 `content/characters/index.ts` 注册一行          |
+| **加一张新地图**                     | 新建 `shared/src/content/maps/<id>.ts` + 在 `content/maps/index.ts` 注册一行                      |
+| **调整 AI 难度 / 行为**              | `shared/src/ai/ai-controller.ts` 的 `AI_SKILLS` 与 `decideMovement`                               |
 | 加一个新道具                         | `shared/src/types.ts` 的 `ItemId` + `shared/src/config/items.ts`（新效果类型再动 `sim/items.ts`） |
 | 改道具刷新频率 / 同屏上限 / 拾取半径 | `shared/src/config/match.ts` 的 `items`                                                           |
-| 改地图布局 / 出生点                  | `shared/src/config/map-shrine.ts`                                                                 |
+| 改地图布局 / 出生点                  | `shared/src/content/maps/shrine.ts`（每张图一个文件）                                             |
 | 改伤害与护盾规则                     | `shared/src/sim/damage.ts`（**改完必须跑 `npm test`**，那里有用例）                               |
 | 改移动手感（加速度、贴墙滑动）       | `shared/src/sim/movement.ts`                                                                      |
 | 改某个界面的布局文案                 | `client/src/scenes/` 下对应的场景文件                                                             |
-| 换正式美术素材                       | `client/src/render/placeholder-textures.ts`（替换成 `this.load.image`）                           |
-| 换正式音效                           | `client/src/audio/audio-manager.ts`（把合成改成加载）                                             |
+| 换正式美术素材                       | 把 PNG 放进 `assets/images/`（见 `assets/README.md`），不用改代码                                 |
+| 换正式音效                           | 把 `.ogg` 放进 `assets/audio/`（见 `assets/README.md`），不用改代码                               |
 | 改窗口缩放策略                       | `client/src/render/integer-scale.ts`                                                              |
 | 加一个新场景                         | `client/src/scenes/` 新建文件 + `scene-keys.ts` 加 key + `main.ts` 注册                           |
 | 换联机服务端地址                     | `client/src/scenes/battle-scene.ts` 的 `ONLINE_SERVER_URL`                                        |
@@ -297,7 +350,8 @@ sequenceDiagram
 
 1. **客户端不推进世界**：`step()` 只在服务端与单机练习场调用，客户端只做预测与插值。
 2. **只预测自己的移动**（ADR-8）：子弹、他人位置、伤害全部以服务端为准。
-3. **快照不含墙体**：墙由同一份 `map-shrine.ts` 在两端各自生成，改地图要同时更新两端。
+3. **快照不含墙体**：墙由同一份地图定义（`shared/src/content/maps/*.ts`）在两端各自生成，
+   改地图只改那一处即可；但**联机目前固定用默认地图**（见 extending-content.md 第 4 节）。
 4. **输入一律清洗**：`sanitizeInput()` 拦 NaN 与超大值，服务端不信任客户端任何数字。
 
 ---

@@ -16,7 +16,7 @@ const game = new Phaser.Game({
   // 像素风：关闭线性采样（antialias），但**不开启** roundPixels ——
   // pixelArt: true 会同时把 roundPixels 打开，与 art-spec 2.4「保留亚像素位置」冲突。
   render: { antialias: false, roundPixels: false },
-  // 逻辑分辨率固定 640×360，缩放方式自己算（art-spec 2.2：整数倍放大，非整数倍留黑边）
+  // 逻辑分辨率固定 1280×720，缩放方式自己算（art-spec 2.2：整数倍放大，非整数倍留黑边）
   scale: { mode: Phaser.Scale.NONE, autoCenter: Phaser.Scale.CENTER_BOTH },
   // 第一个场景会自动启动，其余场景等被 start / launch 时才创建
   scene: [BootScene, MenuScene, CharacterSelectScene, BattleScene, PauseScene, ResultScene],

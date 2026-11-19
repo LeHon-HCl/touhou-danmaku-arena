@@ -19,8 +19,14 @@ export interface Rect {
   height: number;
 }
 
-/** 可选角色 id。dummy 仅供练习场假人使用，不代表可选角色 */
-export type CharacterId = 'reimu' | 'marisa';
+/**
+ * 可选角色 id。
+ *
+ * 联合类型由 `content/characters` 的注册表推导：新增角色只要在注册表加一行，
+ * 这个类型自动扩展，所有 `Record<CharacterId, …>` 会立刻提示你补全。
+ */
+import type { CharacterId } from './content/characters';
+export type { CharacterId };
 
 /** 决定渲染用贴图的标识，假人单独一档 */
 export type FighterSpriteId = CharacterId | 'dummy';
@@ -136,6 +142,8 @@ export interface PlayerState {
   characterId: FighterSpriteId;
   /** 假人不接收输入、不开火 */
   isDummy: boolean;
+  /** 是否由 AI 控制（单人模式的对手）。与 isDummy 互斥：假人连瞄准都不做 */
+  isAi: boolean;
   /** 数值快照 */
   stats: FighterStats;
   /** 世界坐标（像素） */
@@ -210,6 +218,8 @@ export interface BattleState {
   /** 地图宽高（像素） */
   mapWidth: number;
   mapHeight: number;
+  /** 本局使用的地图 id；渲染与道具刷新都靠它还原地图定义 */
+  mapId: string;
   /** 阻挡移动与子弹的墙体 */
   walls: Rect[];
   /** 全部战斗单位，含假人 */

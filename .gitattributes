@@ -1,3 +1,5 @@
 * text=auto eol=lf
 *.png binary
 *.ogg binary
+# Windows 批处理必须是 CRLF：LF 会让 cmd 解析 if/for 块出问题
+*.bat text eol=crlf
